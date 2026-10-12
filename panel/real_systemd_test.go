@@ -88,23 +88,43 @@ func TestRealSystemdAutoRestart(t *testing.T) {
 		t.Fatalf("arstopped must not be running: %+v", before["arstopped"])
 	}
 
-	(&app{}).restartAllRunning()
-	time.Sleep(2 * time.Second)
+	read := func() map[string]unitState {
+		time.Sleep(2 * time.Second)
+		unitStatesAt = time.Time{} // drop the 3s cache so the new state is read
+		return loadUnitStates(append(running, "arstopped"))
+	}
 
-	unitStatesAt = time.Time{} // drop the 3s cache so the new state is read
-	after := loadUnitStates(append(running, "arstopped"))
+	// Wave 1: a schedule limited to arrun1 (plus the stopped arstopped, which
+	// must stay stopped). arrun2 is running but NOT selected.
+	(&app{}).restartAllRunning(autoRestartSettings{Only: []string{"arrun1", "arstopped"}})
+	after1 := read()
+	if after1["arrun1"].Active != "active" || after1["arrun1"].InvocationID == before["arrun1"].InvocationID {
+		t.Errorf("selected arrun1 was not restarted: before %+v after %+v", before["arrun1"], after1["arrun1"])
+	}
+	if after1["arrun2"].InvocationID != before["arrun2"].InvocationID {
+		t.Errorf("arrun2 was restarted although it was not selected")
+	}
+
+	// Wave 2: no selection = every location in the registry.
+	(&app{}).restartAllRunning(autoRestartSettings{})
+	after2 := read()
 	for _, n := range []string{"arrun1", "arrun2"} {
-		if after[n].Active != "active" {
-			t.Errorf("%s should be running after the restart: %+v", n, after[n])
-		}
-		if after[n].InvocationID == before[n].InvocationID {
-			t.Errorf("%s was not restarted (same invocation %s)", n, before[n].InvocationID)
+		if after2[n].Active != "active" {
+			t.Errorf("%s should be running after the restart: %+v", n, after2[n])
 		}
 	}
-	if after["arremoved"].InvocationID != before["arremoved"].InvocationID {
-		t.Errorf("arremoved (not in the registry) was restarted")
+	if after2["arrun2"].InvocationID == before["arrun2"].InvocationID {
+		t.Errorf("arrun2 was not restarted by the all-locations wave")
 	}
-	if after["arstopped"].Active == "active" {
-		t.Errorf("arstopped was started by the auto-restart: %+v", after["arstopped"])
+	if after2["arrun1"].InvocationID == after1["arrun1"].InvocationID {
+		t.Errorf("arrun1 was not restarted by the all-locations wave")
+	}
+	for _, after := range []map[string]unitState{after1, after2} {
+		if after["arremoved"].InvocationID != before["arremoved"].InvocationID {
+			t.Errorf("arremoved (not in the registry) was restarted")
+		}
+		if after["arstopped"].Active == "active" {
+			t.Errorf("arstopped was started by the auto-restart: %+v", after["arstopped"])
+		}
 	}
 }

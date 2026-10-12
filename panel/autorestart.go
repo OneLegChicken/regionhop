@@ -31,6 +31,23 @@ type autoRestartSettings struct {
 	Every   int    `json:"every"`
 	Unit    string `json:"unit"`               // "hours", "days" or "weeks"
 	LastRun int64  `json:"last_run,omitempty"` // unix seconds of the last run (or of when the schedule was armed)
+	// Only limits the schedule to these locations. Empty means every
+	// location, which is also what a schedule saved before this field
+	// existed gets.
+	Only []string `json:"only,omitempty"`
+}
+
+// includes reports whether the schedule covers the named location.
+func (s autoRestartSettings) includes(name string) bool {
+	if len(s.Only) == 0 {
+		return true
+	}
+	for _, n := range s.Only {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultAutoRestart() autoRestartSettings {
@@ -125,7 +142,7 @@ func (a *app) autoRestartTick(now time.Time) {
 	a.mu.Lock()
 	s := loadAutoRestart()
 	next, run := autoRestartStep(s, now)
-	if next != s {
+	if next.LastRun != s.LastRun { // the step only ever changes LastRun
 		if err := saveAutoRestart(next); err != nil {
 			a.mu.Unlock()
 			log.Printf("auto-restart: cannot save schedule, skipping this round: %v", err)
@@ -134,31 +151,35 @@ func (a *app) autoRestartTick(now time.Time) {
 	}
 	a.mu.Unlock()
 	if run {
-		a.restartAllRunning()
+		a.restartAllRunning(next)
 	}
 }
 
-// restartAllRunning restarts every location that is currently running, one
-// at a time. Stopped locations stay stopped: someone stopped them on purpose.
+// restartAllRunning restarts every location the schedule covers that is
+// currently running, one at a time. Stopped locations stay stopped: someone stopped them on purpose.
 // a.mu is held only around each single restart (not the whole wave), so
 // adding or removing a location never waits minutes behind this -- and
 // because the registry is re-read under the lock each time, a location
 // removed mid-wave is skipped instead of being started again.
-func (a *app) restartAllRunning() {
+func (a *app) restartAllRunning(s autoRestartSettings) {
 	list, err := loadRegistry(registryPath)
 	if err != nil {
 		log.Printf("auto-restart: cannot read the location list: %v", err)
 		return
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
-	restarted := 0
+	restarted, covered := 0, 0
 	for _, t := range list {
+		if !s.includes(t.Name) {
+			continue
+		}
+		covered++
 		if a.restartIfRunning(t.Name) {
 			restarted++
 			time.Sleep(autoRestartStagger)
 		}
 	}
-	log.Printf("auto-restart: restarted %d of %d locations", restarted, len(list))
+	log.Printf("auto-restart: restarted %d of %d covered locations", restarted, covered)
 }
 
 func (a *app) restartIfRunning(name string) bool {
@@ -195,6 +216,31 @@ func formatScheduleTime(unix int64) string {
 	return time.Unix(unix, 0).UTC().Format("2006-01-02 15:04 UTC")
 }
 
+type autoRestartLocation struct {
+	Name    string
+	Region  string
+	Checked bool
+}
+
+// autoRestartLocations lists the current locations for the picker, with the
+// ones the schedule covers ticked.
+func autoRestartLocations(s autoRestartSettings) []autoRestartLocation {
+	list, err := loadRegistry(registryPath)
+	if err != nil {
+		return nil
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	out := make([]autoRestartLocation, 0, len(list))
+	for _, t := range list {
+		out = append(out, autoRestartLocation{
+			Name:    t.Name,
+			Region:  regionLabel(t.Region),
+			Checked: len(s.Only) > 0 && s.includes(t.Name),
+		})
+	}
+	return out
+}
+
 // autoRestartTemplateData is what the settings page shows about the schedule.
 func autoRestartTemplateData() map[string]any {
 	s := loadAutoRestart()
@@ -203,9 +249,11 @@ func autoRestartTemplateData() map[string]any {
 		next = formatScheduleTime(s.LastRun + int64(s.interval()/time.Second))
 	}
 	return map[string]any{
-		"AutoRestart":     s,
-		"AutoRestartLast": formatScheduleTime(s.LastRun),
-		"AutoRestartNext": next,
+		"AutoRestart":          s,
+		"ArSelected":           len(s.Only) > 0,
+		"AutoRestartLocations": autoRestartLocations(s),
+		"AutoRestartLast":      formatScheduleTime(s.LastRun),
+		"AutoRestartNext":      next,
 	}
 }
 
@@ -226,11 +274,32 @@ func (a *app) handleAutoRestart(w http.ResponseWriter, r *http.Request) {
 		Every:   every,
 		Unit:    r.FormValue("ar_unit"),
 	}
+	scopeSelected := r.FormValue("ar_scope") == "selected"
+	if scopeSelected {
+		existing := map[string]bool{}
+		if list, lerr := loadRegistry(registryPath); lerr == nil {
+			for _, t := range list {
+				existing[t.Name] = true
+			}
+		}
+		seen := map[string]bool{}
+		for _, n := range r.PostForm["ar_name"] {
+			if validName(n) && existing[n] && !seen[n] {
+				seen[n] = true
+				s.Only = append(s.Only, n)
+			}
+		}
+		sort.Strings(s.Only)
+	}
 	err := validateAutoRestart(s)
+	if err == nil && scopeSelected && len(s.Only) == 0 {
+		err = fmt.Errorf("choose at least one location, or switch to all locations")
+	}
 	if err != nil && !s.Enabled {
 		// Turning it off must always work, even if the form was left in a
 		// state that wouldn't be a valid schedule.
-		s.Every, s.Unit, err = old.Every, old.Unit, nil
+		s.Every, s.Unit, s.Only, err = old.Every, old.Unit, old.Only, nil
+		scopeSelected = len(old.Only) > 0
 	}
 	if err == nil {
 		// Changing what the schedule means restarts the countdown from now;
@@ -246,6 +315,8 @@ func (a *app) handleAutoRestart(w http.ResponseWriter, r *http.Request) {
 	data := credsTemplateData(a.creds, false, "")
 	if err != nil {
 		data["AutoRestart"] = s // keep what was typed
+		data["ArSelected"] = scopeSelected
+		data["AutoRestartLocations"] = autoRestartLocations(s)
 		data["AutoRestartError"] = err.Error()
 	} else {
 		for k, v := range autoRestartTemplateData() {

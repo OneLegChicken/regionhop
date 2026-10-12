@@ -138,8 +138,37 @@
             </select>
           </div>
         </div>
+        <div class="field">
+          <label>{{t .Lang "autorestart.scope"}}</label>
+          <label style="display:block"><input type="radio" name="ar_scope" value="all" {{if not .ArSelected}}checked{{end}}> {{t .Lang "autorestart.scope.all"}}</label>
+          <label style="display:block"><input type="radio" name="ar_scope" value="selected" {{if .ArSelected}}checked{{end}}> {{t .Lang "autorestart.scope.selected"}}</label>
+          <div id="ar-names" style="margin-top:0.5rem;padding-inline-start:1.4rem">
+            {{range .AutoRestartLocations}}
+            <label style="display:block"><input type="checkbox" name="ar_name" value="{{.Name}}" {{if .Checked}}checked{{end}}> <span class="mono">{{.Name}}</span> <span class="note">{{.Region}}</span></label>
+            {{else}}
+            <span class="note">{{t $.Lang "autorestart.nolocations"}}</span>
+            {{end}}
+          </div>
+        </div>
         <button type="submit">{{t .Lang "autorestart.submit"}}</button>
       </form>
+      <script>
+      // The location list only matters for "selected": grey it out for "all".
+      // (Without JS everything stays enabled and the server ignores the
+      // ticks when "all" is chosen.)
+      (function () {
+        var radios = document.querySelectorAll('input[name="ar_scope"]');
+        var boxes = document.querySelectorAll('#ar-names input[type="checkbox"]');
+        var wrap = document.getElementById("ar-names");
+        function sync() {
+          var selected = document.querySelector('input[name="ar_scope"]:checked').value === "selected";
+          boxes.forEach(function (b) { b.disabled = !selected; });
+          wrap.style.opacity = selected ? "1" : "0.5";
+        }
+        radios.forEach(function (r) { r.addEventListener("change", sync); });
+        sync();
+      })();
+      </script>
       <div class="card-sub">
         {{t .Lang "autorestart.next"}}: <span class="mono" id="ar-next">{{if .AutoRestartNext}}{{.AutoRestartNext}}{{else}}—{{end}}</span><br>
         {{t .Lang "autorestart.last"}}: <span class="mono">{{if .AutoRestartLast}}{{.AutoRestartLast}}{{else}}{{t .Lang "autorestart.never"}}{{end}}</span><br><br>

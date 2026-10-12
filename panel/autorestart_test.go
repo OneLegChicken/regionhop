@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -65,7 +66,7 @@ func TestAutoRestartStep(t *testing.T) {
 	// Disabled: never runs and never touches the schedule.
 	off := on
 	off.Enabled = false
-	if s, run := autoRestartStep(off, base); run || s != off {
+	if s, run := autoRestartStep(off, base); run || !reflect.DeepEqual(s, off) {
 		t.Errorf("disabled schedule changed or ran: %+v %v", s, run)
 	}
 
@@ -104,14 +105,14 @@ func TestAutoRestartSaveLoad(t *testing.T) {
 	autoRestartPath = filepath.Join(t.TempDir(), "auto-restart.json")
 	defer func() { autoRestartPath = old }()
 
-	if got := loadAutoRestart(); got != defaultAutoRestart() {
+	if got := loadAutoRestart(); !reflect.DeepEqual(got, defaultAutoRestart()) {
 		t.Errorf("missing file should give defaults, got %+v", got)
 	}
-	want := autoRestartSettings{Enabled: true, Every: 12, Unit: "hours", LastRun: 1790000000}
+	want := autoRestartSettings{Enabled: true, Every: 12, Unit: "hours", LastRun: 1790000000, Only: []string{"de1", "us1"}}
 	if err := saveAutoRestart(want); err != nil {
 		t.Fatal(err)
 	}
-	if got := loadAutoRestart(); got != want {
+	if got := loadAutoRestart(); !reflect.DeepEqual(got, want) {
 		t.Errorf("round trip: got %+v want %+v", got, want)
 	}
 	// A hand-edited or corrupt file must fall back to the defaults, never
@@ -120,9 +121,39 @@ func TestAutoRestartSaveLoad(t *testing.T) {
 		if err := writeFileForTest(autoRestartPath, content); err != nil {
 			t.Fatal(err)
 		}
-		if got := loadAutoRestart(); got != defaultAutoRestart() {
+		if got := loadAutoRestart(); !reflect.DeepEqual(got, defaultAutoRestart()) {
 			t.Errorf("%q should fall back to defaults, got %+v", content, got)
 		}
+	}
+}
+
+func TestAutoRestartIncludes(t *testing.T) {
+	all := autoRestartSettings{}
+	for _, n := range []string{"de1", "anything"} {
+		if !all.includes(n) {
+			t.Errorf("empty selection must cover %q", n)
+		}
+	}
+	some := autoRestartSettings{Only: []string{"de1", "us1"}}
+	for n, want := range map[string]bool{"de1": true, "us1": true, "fr1": false, "": false, "de": false} {
+		if got := some.includes(n); got != want {
+			t.Errorf("includes(%q) = %v, want %v", n, got, want)
+		}
+	}
+}
+
+// A schedule saved before the selection existed has no "only" key and must
+// keep meaning "every location".
+func TestAutoRestartOldFileMeansAllLocations(t *testing.T) {
+	old := autoRestartPath
+	autoRestartPath = filepath.Join(t.TempDir(), "auto-restart.json")
+	defer func() { autoRestartPath = old }()
+	if err := writeFileForTest(autoRestartPath, `{"enabled":true,"every":2,"unit":"days","last_run":1790000000}`); err != nil {
+		t.Fatal(err)
+	}
+	got := loadAutoRestart()
+	if !got.Enabled || got.Every != 2 || len(got.Only) != 0 || !got.includes("whatever") {
+		t.Fatalf("old-format file misread: %+v", got)
 	}
 }
 

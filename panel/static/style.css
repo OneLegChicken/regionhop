@@ -231,6 +231,11 @@ button, .btn {
 .btn-muted:hover { background: var(--border); color: var(--text); }
 
 .actions { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+/* In the locations table the four buttons stay on one line: with wrapping
+   allowed, the table squeezed this column to one button's width and Logs
+   dropped onto its own row. A nowrap row makes the column as wide as the
+   buttons need; the table-wrap scrolls if the screen is narrower than that. */
+td > .actions { flex-wrap: nowrap; }
 form.inline { display: inline-flex; }
 
 /* Latency-test toolbar */
@@ -435,6 +440,7 @@ pre.logs {
   th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { display: none; }
   th, td { padding: 0.65rem 0.7rem; }
   .actions { gap: 0.3rem; }
+  td > .actions { flex-wrap: wrap; }
   .actions .btn-sm, .actions form.inline button { flex: 1 1 auto; min-width: 0; }
   .inline-form { flex-direction: column; align-items: stretch; }
   .inline-form .field { min-width: 0; }
