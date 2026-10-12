@@ -49,6 +49,8 @@ a `psictl` command.
 - 🔒 **Local-only by design** — SOCKS ports are bound to loopback in the Psiphon config *and* blocked at the firewall as a second layer; nothing in the panel can expose them externally
 - 🖥 **Web panel** — bcrypt-hashed password, signed session cookies, login-attempt lockout, random listen port chosen at install time
 - 📡 **Real connection status** — the dashboard shows *connecting* vs. *active* based on the tunnel's own notices, plus the exit region and flag once it lands
+- 🕒 **Auto restart** — restart every running location on a schedule you choose (every N hours, days or weeks) from the panel's Settings page, so connections don't go stale over days of uptime
+- 🌐 **Exit IP check** — the latency test also shows the address websites see for traffic through each location
 - 🔀 **Upstream proxy** — on servers whose network blocks Psiphon, send every tunnel through a SOCKS/HTTP proxy or a V2Ray link (VLESS/VMess/Trojan/Shadowsocks, run by a bundled Xray) first — see [Upstream](#upstream)
 - ⌨️ **SSH-side control** — `psictl list|start|stop|restart|logs` for anyone who prefers the terminal
 - ⚙️ **systemd-native** — every tunnel and the panel itself are ordinary systemd services: `systemctl status`, `journalctl`, auto-restart on failure, all work as expected
@@ -131,6 +133,15 @@ Open the panel URL printed at the end of setup, sign in, and:
 3. Watch the status badge go **connecting** → **active**, and the Exit
    column fill in with the region Psiphon actually landed on
 4. **Restart** / **Stop** / **Remove** / **Logs** per location, as needed
+5. Use the ⚡ button (or **Test all**) to measure latency. The result also
+   shows the exit IP under it, looked up through that location's tunnel via
+   `api.ipify.org` (with `checkip.amazonaws.com` as a fallback) — those
+   services see only the exit address, never your own.
+6. **Auto restart** (Settings page) restarts all running locations on a
+   schedule of 1 hour to 365 days. It restarts one location at a time about 3
+   seconds apart, leaves stopped locations stopped, and shows the next
+   restart time (UTC). Each restart briefly drops that location's
+   connections.
 
 ## Available regions
 
