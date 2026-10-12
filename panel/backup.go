@@ -29,6 +29,9 @@ type backupFile struct {
 	// Pointer so a backup made before upstream support existed (field
 	// absent) leaves the current server's upstream alone on import.
 	Upstream *upstreamSettings `json:"upstream,omitempty"`
+	// Same reasoning: absent in older backups, which then leave the current
+	// auto-restart schedule alone.
+	AutoRestart *autoRestartSettings `json:"auto_restart,omitempty"`
 }
 
 // handleBackupExport streams the current registry + Psiphon config as a
@@ -38,6 +41,7 @@ func (a *app) handleBackupExport(w http.ResponseWriter, r *http.Request) {
 	list, err := loadRegistry(registryPath)
 	creds := a.creds
 	upstream := loadUpstream()
+	autoRestart := loadAutoRestart()
 	a.mu.Unlock()
 	if err != nil {
 		http.Error(w, "failed reading registry: "+err.Error(), 500)
@@ -51,6 +55,7 @@ func (a *app) handleBackupExport(w http.ResponseWriter, r *http.Request) {
 		Tunnels:       list,
 		ExtraConfig:   creds.ConfigJSON,
 		Upstream:      &upstream,
+		AutoRestart:   &autoRestart,
 	}
 	body, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
@@ -126,6 +131,24 @@ func (a *app) handleBackupImport(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			a.renderSettingsError(w, r, "backup: upstream: "+err.Error())
+			return
+		}
+	}
+
+	if b.AutoRestart != nil {
+		s := *b.AutoRestart
+		if err := validateAutoRestart(s); err != nil {
+			a.renderSettingsError(w, r, "backup: auto restart: "+err.Error())
+			return
+		}
+		// A restored schedule counts down from now, not from a time on the
+		// old server.
+		s.LastRun = 0
+		if s.Enabled {
+			s.LastRun = time.Now().Unix()
+		}
+		if err := saveAutoRestart(s); err != nil {
+			a.renderSettingsError(w, r, "backup: auto restart: "+err.Error())
 			return
 		}
 	}

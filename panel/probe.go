@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,7 @@ type probeResult struct {
 	OK        bool   `json:"ok"`
 	LatencyMs int    `json:"latencyMs"`
 	Error     string `json:"error,omitempty"`
+	IP        string `json:"ip,omitempty"` // exit address as seen by websites; empty if the lookup failed
 }
 
 // probeTargetHost is a single fixed, well-known endpoint used for every
@@ -168,14 +170,100 @@ func probeReal(socksAddr string) probeResult {
 }
 
 func runProbe(mode, socksAddr string) probeResult {
+	var r probeResult
 	switch mode {
 	case "tcp":
-		return probeTCP(socksAddr)
+		r = probeTCP(socksAddr)
 	case "http":
-		return probeHTTP(socksAddr)
+		r = probeHTTP(socksAddr)
 	case "real":
-		return probeReal(socksAddr)
+		r = probeReal(socksAddr)
 	default:
 		return probeResult{Error: "unknown probe mode"}
 	}
+	// Only after the latency has been measured, and never part of it: the
+	// lookup is an extra request, so it must not inflate the number above.
+	if r.OK {
+		r.IP = fetchExitIP(socksAddr)
+	}
+	return r
+}
+
+// ipLookupTarget is one fixed IP-echo service. Like the latency target, these
+// are constants -- nothing user-supplied ever reaches the dial.
+type ipLookupTarget struct {
+	host string
+	port int
+	tls  bool
+}
+
+// Two independent services, so one being blocked from some exit country
+// doesn't leave the column empty. They are variables only so tests can
+// point them at a local server.
+var ipLookupTargets = []ipLookupTarget{
+	{"api.ipify.org", 443, true},
+	{"checkip.amazonaws.com", 443, true},
+}
+
+const ipLookupTimeout = 8 * time.Second
+
+// fetchExitIP asks an IP-echo service, through the tunnel, which address it
+// sees -- i.e. the address websites see for traffic leaving this location.
+// Returns "" if every service fails; the latency result stands without it.
+// Only a successfully parsed IP address is ever returned, because the text
+// comes from a third party and ends up on the dashboard.
+func fetchExitIP(socksAddr string) string {
+	for _, t := range ipLookupTargets {
+		if ip := fetchExitIPFrom(socksAddr, t); ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+func fetchExitIPFrom(socksAddr string, t ipLookupTarget) string {
+	ctx, cancel := context.WithTimeout(context.Background(), ipLookupTimeout)
+	defer cancel()
+	conn, err := socks5Connect(ctx, socksAddr, t.host, t.port)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	if dl, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(dl)
+	}
+	var rw io.ReadWriter = conn
+	if t.tls {
+		tc := tls.Client(conn, &tls.Config{ServerName: t.host})
+		if err := tc.HandshakeContext(ctx); err != nil {
+			return ""
+		}
+		rw = tc
+	}
+	req := "GET / HTTP/1.1\r\nHost: " + t.host + "\r\nUser-Agent: regionhop\r\nAccept: text/plain\r\nConnection: close\r\n\r\n"
+	if _, err := rw.Write([]byte(req)); err != nil {
+		return ""
+	}
+	raw, _ := io.ReadAll(io.LimitReader(rw, 4096))
+	return parseIPEchoResponse(string(raw))
+}
+
+// parseIPEchoResponse accepts a 200 response whose body is a bare IP address
+// and returns it in canonical form; anything else yields "".
+func parseIPEchoResponse(raw string) string {
+	head, body, ok := strings.Cut(raw, "\r\n\r\n")
+	if !ok || !strings.HasPrefix(head, "HTTP/1.") || !strings.Contains(strings.SplitN(head, "\r\n", 2)[0], " 200") {
+		return ""
+	}
+	if strings.Contains(strings.ToLower(head), "transfer-encoding: chunked") {
+		// Some servers chunk even tiny bodies: "<hex size>\r\n<data>\r\n0\r\n\r\n".
+		if _, rest, ok := strings.Cut(body, "\r\n"); ok {
+			body, _, _ = strings.Cut(rest, "\r\n")
+		}
+	}
+	ip := net.ParseIP(strings.TrimSpace(body))
+	if ip == nil {
+		return ""
+	}
+	return ip.String()
 }

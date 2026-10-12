@@ -102,6 +102,7 @@ func main() {
 	}
 
 	startUpdateChecker(1 * time.Hour)
+	a.startAutoRestart()
 
 	// Everything is served under basePath (e.g. "/x7k9m2p4") when
 	// PANEL_PATH_PREFIX is set: a request to the bare "/" or "/login" then
@@ -122,6 +123,7 @@ func main() {
 	mux.HandleFunc(basePath+"/tunnels/", a.requireAuth(a.handleTunnelAction))
 	mux.HandleFunc(basePath+"/settings", a.requireAuth(a.handleSettings))
 	mux.HandleFunc(basePath+"/settings/upstream", a.requireAuth(a.handleUpstream))
+	mux.HandleFunc(basePath+"/settings/autorestart", a.requireAuth(a.handleAutoRestart))
 	mux.HandleFunc(basePath+"/backup/export", a.requireAuth(a.handleBackupExport))
 	mux.HandleFunc(basePath+"/backup/import", a.requireAuth(a.handleBackupImport))
 	mux.HandleFunc(basePath+"/update", a.requireAuth(a.handleUpdateTrigger))
@@ -534,7 +536,7 @@ func (a *app) handleUpstream(w http.ResponseWriter, r *http.Request) {
 
 func credsTemplateData(c psiphonCreds, saved bool, errMsg string) map[string]any {
 	_, xrayErr := os.Stat(xrayBinary)
-	return map[string]any{
+	data := map[string]any{
 		"ConfigJSON":    c.ConfigJSON,
 		"Saved":         saved,
 		"Error":         errMsg,
@@ -542,6 +544,10 @@ func credsTemplateData(c psiphonCreds, saved bool, errMsg string) map[string]any
 		"UpstreamState": upstreamServiceState(),
 		"XrayAvailable": xrayErr == nil,
 	}
+	for k, v := range autoRestartTemplateData() {
+		data[k] = v
+	}
+	return data
 }
 
 // /tunnels/<name>/<action> (under basePath, which must be stripped first —

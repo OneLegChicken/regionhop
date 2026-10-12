@@ -118,6 +118,37 @@
 
     <div class="card">
       <div class="page-header" style="margin-bottom:0.5rem">
+        <h1 style="font-size:1.1rem">{{t .Lang "autorestart.title"}}</h1>
+        <div class="desc">{{t .Lang "autorestart.desc"}}</div>
+      </div>
+      {{if .AutoRestartSaved}}<div class="alert alert-success">{{t .Lang "autorestart.saved"}}</div>{{end}}
+      {{if .AutoRestartError}}<div class="alert alert-error">{{.AutoRestartError}}</div>{{end}}
+      <form method="post" action="{{url "/settings/autorestart"}}">
+        <div class="field">
+          <label><input type="checkbox" name="ar_enabled" {{if .AutoRestart.Enabled}}checked{{end}}> {{t .Lang "autorestart.enable"}}</label>
+        </div>
+        <div class="field">
+          <label for="ar-every">{{t .Lang "autorestart.every"}}</label>
+          <div class="actions" style="gap:0.5rem">
+            <input id="ar-every" name="ar_every" type="number" min="1" max="8760" step="1" value="{{.AutoRestart.Every}}" style="max-width:7rem" required>
+            <select name="ar_unit" aria-label="{{t .Lang "autorestart.every"}}">
+              <option value="hours" {{if eq .AutoRestart.Unit "hours"}}selected{{end}}>{{t .Lang "autorestart.unit.hours"}}</option>
+              <option value="days" {{if eq .AutoRestart.Unit "days"}}selected{{end}}>{{t .Lang "autorestart.unit.days"}}</option>
+              <option value="weeks" {{if eq .AutoRestart.Unit "weeks"}}selected{{end}}>{{t .Lang "autorestart.unit.weeks"}}</option>
+            </select>
+          </div>
+        </div>
+        <button type="submit">{{t .Lang "autorestart.submit"}}</button>
+      </form>
+      <div class="card-sub">
+        {{t .Lang "autorestart.next"}}: <span class="mono" id="ar-next">{{if .AutoRestartNext}}{{.AutoRestartNext}}{{else}}—{{end}}</span><br>
+        {{t .Lang "autorestart.last"}}: <span class="mono">{{if .AutoRestartLast}}{{.AutoRestartLast}}{{else}}{{t .Lang "autorestart.never"}}{{end}}</span><br><br>
+        {{t .Lang "autorestart.note"}}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="page-header" style="margin-bottom:0.5rem">
         <h1 style="font-size:1.1rem">{{t .Lang "backup.title"}}</h1>
         <div class="desc">{{t .Lang "backup.desc"}}</div>
       </div>

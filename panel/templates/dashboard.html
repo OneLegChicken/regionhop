@@ -225,6 +225,7 @@
 
   var mode = "real";
   var timeoutMsg = {{t .Lang "probe.timeout"}};
+  var ipTitle = {{t .Lang "probe.ip"}};
 
   tabsEl.addEventListener("click", function (e) {
     var btn = e.target.closest("button[data-mode]");
@@ -248,6 +249,15 @@
       .then(function (res) {
         if (res.ok) {
           latencyEl.textContent = res.latencyMs + " ms";
+          if (res.ip) {
+            // The address comes from a third-party service: DOM text only, never innerHTML.
+            var ipEl = document.createElement("div");
+            ipEl.className = "note";
+            ipEl.style.fontSize = "0.75em";
+            ipEl.title = ipTitle;
+            ipEl.textContent = res.ip;
+            latencyEl.appendChild(ipEl);
+          }
         } else {
           latencyEl.textContent = timeoutMsg;
           latencyEl.title = res.error || "";
